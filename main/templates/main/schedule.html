@@ -1,149 +1,294 @@
-<!-- main/templates/main/schedule.html -->
 <!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>График смен</title>
-  {% comment %} <link rel="manifest" href="{% static 'manifest.json' %}"> {% endcomment %}
   <style>
+    * {
+      box-sizing: border-box;
+    }
     body {
-      font-family: Arial, sans-serif;
-      margin: 20px;
-      background: #f9f9f9;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      margin: 0;
+      padding: 12px;
+      background: #f8f9fa;
+      color: #333;
     }
     h2 {
-      color: #333;
+      text-align: center;
+      margin: 0 0 16px;
+      font-size: 1.4em;
+    }
+    .table-container {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      margin-bottom: 20px;
     }
     table {
       width: 100%;
       border-collapse: collapse;
-      margin-top: 20px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      background: white;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      min-width: 800px; /* Гарантирует ширину */
     }
     th, td {
-      border: 1px solid #ddd;
+      border: 1px solid #e0e0e0;
       padding: 8px;
       text-align: center;
+      font-size: 14px;
+      white-space: nowrap; /* 🔑 Запрещает перенос текста */
     }
     th {
-      background: #eee;
+      background: #f1f3f5;
       font-weight: bold;
+      position: sticky;
+      top: 0;
     }
-    .red {
-      background-color: #ffcccc !important;
-      color: #900;
+    .day-label {
+      font-size: 10px;
+      color: #666;
+      display: block;
     }
     .cell {
       cursor: pointer;
-      transition: background 0.2s;
+      min-height: 36px;
+      /* УБРАНО display: flex — оно ломает таблицу */
+      padding: 6px !important;
     }
     .cell:hover {
-      background: #e6f7ff;
+      background: #e8f4ff;
     }
-    .day-label {
-      font-size: 0.8em;
-      color: #666;
+    .red {
+      background-color: #ffebee !important;
+      color: #c62828;
     }
-    .shift-day {
-      color: #007bff;
-      font-weight: bold;
+    /* Модальное окно */
+    #modal {
+      display: none;
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: rgba(0,0,0,0.6);
+      z-index: 1000;
+      padding: 20px;
     }
-    .shift-night {
-      color: #dc3545;
-      font-weight: bold;
+    #modal-content {
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      max-width: 500px;
+      margin: 80px auto;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
     }
-    .shift-off {
-      color: #6c757d;
-      font-style: italic;
+    #modal h3 {
+      margin-top: 0;
+      font-size: 1.2em;
+    }
+    #modal button {
+      display: block;
+      width: 100%;
+      padding: 12px;
+      margin: 6px 0;
+      font-size: 16px;
+      border: none;
+      border-radius: 8px;
+      background: #e0e0e0;
+      cursor: pointer;
+    }
+    #modal button:hover {
+      background: #d0d0d0;
+    }
+    .swap-btn {
+      font-size: 10px;
+      padding: 2px 6px;
+      margin-left: 6px;
+    }
+    @media (max-width: 600px) {
+      th, td {
+        padding: 6px 4px;
+        font-size: 12px;
+      }
+      .day-label {
+        font-size: 9px;
+      }
     }
   </style>
 </head>
 <body>
-  <h2 id="cafe-name">Загрузка...</h2>
-  <table id="schedule-table">
-    <thead id="table-header"></thead>
-    <tbody id="table-body"></tbody>
-  </table>
+  <h2 id="cafe-name">Загрузка графика...</h2>
+  
+  <!-- Контейнер с прокруткой -->
+  <div class="table-container">
+    <table id="schedule-table">
+      <thead id="table-header"></thead>
+      <tbody id="table-body"></tbody>
+    </table>
+  </div>
+
+  <!-- Модальное окно -->
+  <div id="modal">
+    <div id="modal-content">
+      <h3>Выберите смену</h3>
+      <button onclick="setOwnShift('07:30')">07:30 (своя точка)</button>
+      <button onclick="setOwnShift('08:00')">08:00 (своя точка)</button>
+      <button onclick="setOwnShift('10:00')">10:00 (своя точка)</button>
+      <button onclick="openOtherShopSelector()">Подработка на другой точке</button>
+      <button onclick="setOff()">Выходной</button>
+      <button style="background:#f5f5f5;" onclick="closeModal()">Отмена</button>
+      <div id="other-shops" style="margin-top:16px;"></div>
+    </div>
+  </div>
 
   <script>
-    const CAFFE_ID = 2; // ⚠️ Замените на ID вашей кофейни или получайте из URL
+    // === КОНФИГУРАЦИЯ ===
+    const CAFFE_ID = 2;
 
+    // === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
+    let currentCell = null;
+    let currentWorkerId = null;
+    let currentDate = null;
+    let coffeeShopsCache = null;
+
+    // === ЗАГРУЗКА ГРАФИКА ===
     async function loadSchedule() {
-        try {
-          const res = await fetch(`/api/schedule/${CAFFE_ID}/`);
-          if (!res.ok) throw new Error('Ошибка загрузки');
-    
-          const data = await res.json();
-          document.getElementById('cafe-name').textContent = data.cafe_name;
-    
-          // Заголовок
-          let headerHTML = '<tr><th>Работник</th>';
-          data.header.forEach(day => {
+      try {
+        const res = await fetch(`/api/schedule/${CAFFE_ID}/`);
+        if (!res.ok) throw new Error(`Ошибка ${res.status}`);
+        const data = await res.json();
+
+        document.getElementById('cafe-name').textContent = data.cafe_name;
+
+        // Заголовок
+        let headerHTML = '<tr><th>Работник</th>';
+        data.header.forEach(day => {
+          const isRed = data.red_days.includes(day.day);
+          headerHTML += `<th class="${isRed ? 'red' : ''}">
+            <div>${day.day}</div>
+            <span class="day-label">${day.weekday}</span>
+          </th>`;
+        });
+        headerHTML += '</tr>';
+        document.getElementById('table-header').innerHTML = headerHTML;
+
+        // Тело
+        let bodyHTML = '';
+        data.rows.forEach(row => {
+          const swapText = row.swaps !== undefined ? ` (${row.swaps}/4)` : '';
+          bodyHTML += `<tr><td>${row.name}${swapText}
+            <button class="swap-btn" onclick="incrementSwap(${row.id})">+1</button>
+          </td>`;
+          
+          // 🔑 Гарантированно создаём ячейку для КАЖДОГО дня
+          for (let i = 0; i < data.header.length; i++) {
+            const cellValue = row.data[i] || '';
+            const day = data.header[i];
             const isRed = data.red_days.includes(day.day);
-            headerHTML += `<th class="${isRed ? 'red' : ''}">
-                            <div>${day.day}</div>
-                            <div class="day-label">${day.weekday}</div>
-                          </th>`;
-          });
-          headerHTML += '</tr>';
-          document.getElementById('table-header').innerHTML = headerHTML;
-    
-          // Тело таблицы
-          let bodyHTML = '';
-          data.rows.forEach(row => {
-            bodyHTML += `<tr><td>${row.name}</td>`;
-            row.data.forEach((shift, idx) => {
-              const day = data.header[idx];
-              const isRed = data.red_days.includes(day.day);
-              const displayText = shift ? shift : ''; // ← пусто, если выходной
-              bodyHTML += `<td class="${isRed ? 'red' : ''} cell"
-                            data-worker="${row.id}"
-                            data-date="${day.date}"
-                            onclick="editShift(this, '${row.id}', '${day.date}')">
-                            ${displayText}
-                          </td>`;
-            });
-            bodyHTML += '</tr>';
-          });
-          document.getElementById('table-body').innerHTML = bodyHTML;
-    
-        } catch (err) {
-          alert('Ошибка: ' + err.message);
-        }
-      }
-
-    async function editShift(cell, workerId, date) {
-        const current = cell.textContent.trim(); // может быть "", "07:30", "08:00", "10:00"
-      
-        const cycle = ["", "07:30", "08:00", "10:00"];
-        const currentIndex = cycle.indexOf(current);
-        const newIndex = (currentIndex + 1) % cycle.length;
-        const newShift = cycle[newIndex];
-      
-        try {
-          const res = await fetch('/api/shift/update/', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              worker_id: workerId,
-              date: date,
-              start_time: newShift || null  // null для выходного
-            })
-          });
-      
-          if (res.ok) {
-            cell.textContent = newShift; // обновляем текст ячейки
-            loadSchedule(); // перезагружаем таблицу, чтобы обновить красные дни
-          } else {
-            alert('Не удалось сохранить смену');
+            bodyHTML += `<td class="cell ${isRed ? 'red' : ''}"
+              onclick="editShift(this, ${row.id}, '${day.date}')">
+              ${cellValue}
+            </td>`;
           }
-        } catch (e) {
-          alert('Ошибка сети');
-        }
-      }
+          
+          bodyHTML += '</tr>';
+        });
+        document.getElementById('table-body').innerHTML = bodyHTML;
 
-    // Загружаем при загрузке страницы
+      } catch (err) {
+        console.error('Ошибка загрузки:', err);
+        alert('Не удалось загрузить график: ' + err.message);
+      }
+    }
+
+    // === РЕДАКТИРОВАНИЕ ЯЧЕЙКИ ===
+    function editShift(cell, workerId, date) {
+      currentCell = cell;
+      currentWorkerId = workerId;
+      currentDate = date;
+      document.getElementById('modal').style.display = 'block';
+      document.getElementById('other-shops').style.display = 'none';
+    }
+
+    function closeModal() {
+      document.getElementById('modal').style.display = 'none';
+    }
+
+    async function setOwnShift(time) {
+      await saveShift(time, null);
+    }
+
+    function setOff() {
+      saveShift(null, null);
+    }
+
+    async function openOtherShopSelector() {
+      if (!coffeeShopsCache) {
+        const res = await fetch('/api/coffee-shops/');
+        coffeeShopsCache = await res.json();
+      }
+      let html = '<h4>Выберите точку:</h4>';
+      coffeeShopsCache.forEach(shop => {
+        html += `<button onclick="setOtherShop(${shop.id})">${shop.short_code}+</button>`;
+      });
+      document.getElementById('other-shops').innerHTML = html;
+      document.getElementById('other-shops').style.display = 'block';
+    }
+
+    function setOtherShop(cafeId) {
+      saveShift(null, cafeId);
+    }
+
+    async function saveShift(start_time, other_cafe_id) {
+      try {
+        const payload = { worker_id: currentWorkerId, date: currentDate };
+        if (start_time !== null) payload.start_time = start_time;
+        if (other_cafe_id !== null) payload.other_cafe_id = other_cafe_id;
+
+        const res = await fetch('/api/shift/update/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (res.ok) {
+          if (other_cafe_id !== null) {
+            const shop = coffeeShopsCache.find(s => s.id == other_cafe_id);
+            currentCell.textContent = shop ? shop.short_code + '+' : '???+';
+          } else if (start_time !== null) {
+            currentCell.textContent = start_time;
+          } else {
+            currentCell.textContent = '';
+          }
+          loadSchedule();
+        } else {
+          alert('Ошибка сохранения');
+        }
+      } catch (e) {
+        alert('Ошибка сети');
+      }
+      closeModal();
+    }
+
+    // === СЧЁТЧИК ОБМЕНОВ ===
+    async function incrementSwap(workerId) {
+      if (!confirm('Увеличить счётчик обменов на 1?')) return;
+      try {
+        const res = await fetch('/api/swap/increment/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ worker_id: workerId })
+        });
+        if (res.ok) {
+          loadSchedule();
+        } else {
+          alert('Ошибка обновления счётчика');
+        }
+      } catch (e) {
+        alert('Ошибка сети');
+      }
+    }
+
+    // === ИНИЦИАЛИЗАЦИЯ ===
     window.addEventListener('load', loadSchedule);
   </script>
 </body>
