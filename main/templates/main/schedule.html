@@ -1,0 +1,150 @@
+<!-- main/templates/main/schedule.html -->
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>График смен</title>
+  {% comment %} <link rel="manifest" href="{% static 'manifest.json' %}"> {% endcomment %}
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      background: #f9f9f9;
+    }
+    h2 {
+      color: #333;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    th, td {
+      border: 1px solid #ddd;
+      padding: 8px;
+      text-align: center;
+    }
+    th {
+      background: #eee;
+      font-weight: bold;
+    }
+    .red {
+      background-color: #ffcccc !important;
+      color: #900;
+    }
+    .cell {
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .cell:hover {
+      background: #e6f7ff;
+    }
+    .day-label {
+      font-size: 0.8em;
+      color: #666;
+    }
+    .shift-day {
+      color: #007bff;
+      font-weight: bold;
+    }
+    .shift-night {
+      color: #dc3545;
+      font-weight: bold;
+    }
+    .shift-off {
+      color: #6c757d;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <h2 id="cafe-name">Загрузка...</h2>
+  <table id="schedule-table">
+    <thead id="table-header"></thead>
+    <tbody id="table-body"></tbody>
+  </table>
+
+  <script>
+    const CAFFE_ID = 2; // ⚠️ Замените на ID вашей кофейни или получайте из URL
+
+    async function loadSchedule() {
+        try {
+          const res = await fetch(`/api/schedule/${CAFFE_ID}/`);
+          if (!res.ok) throw new Error('Ошибка загрузки');
+    
+          const data = await res.json();
+          document.getElementById('cafe-name').textContent = data.cafe_name;
+    
+          // Заголовок
+          let headerHTML = '<tr><th>Работник</th>';
+          data.header.forEach(day => {
+            const isRed = data.red_days.includes(day.day);
+            headerHTML += `<th class="${isRed ? 'red' : ''}">
+                            <div>${day.day}</div>
+                            <div class="day-label">${day.weekday}</div>
+                          </th>`;
+          });
+          headerHTML += '</tr>';
+          document.getElementById('table-header').innerHTML = headerHTML;
+    
+          // Тело таблицы
+          let bodyHTML = '';
+          data.rows.forEach(row => {
+            bodyHTML += `<tr><td>${row.name}</td>`;
+            row.data.forEach((shift, idx) => {
+              const day = data.header[idx];
+              const isRed = data.red_days.includes(day.day);
+              const displayText = shift ? shift : ''; // ← пусто, если выходной
+              bodyHTML += `<td class="${isRed ? 'red' : ''} cell"
+                            data-worker="${row.id}"
+                            data-date="${day.date}"
+                            onclick="editShift(this, '${row.id}', '${day.date}')">
+                            ${displayText}
+                          </td>`;
+            });
+            bodyHTML += '</tr>';
+          });
+          document.getElementById('table-body').innerHTML = bodyHTML;
+    
+        } catch (err) {
+          alert('Ошибка: ' + err.message);
+        }
+      }
+
+    async function editShift(cell, workerId, date) {
+        const current = cell.textContent.trim(); // может быть "", "07:30", "08:00", "10:00"
+      
+        const cycle = ["", "07:30", "08:00", "10:00"];
+        const currentIndex = cycle.indexOf(current);
+        const newIndex = (currentIndex + 1) % cycle.length;
+        const newShift = cycle[newIndex];
+      
+        try {
+          const res = await fetch('/api/shift/update/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              worker_id: workerId,
+              date: date,
+              start_time: newShift || null  // null для выходного
+            })
+          });
+      
+          if (res.ok) {
+            cell.textContent = newShift; // обновляем текст ячейки
+            loadSchedule(); // перезагружаем таблицу, чтобы обновить красные дни
+          } else {
+            alert('Не удалось сохранить смену');
+          }
+        } catch (e) {
+          alert('Ошибка сети');
+        }
+      }
+
+    // Загружаем при загрузке страницы
+    window.addEventListener('load', loadSchedule);
+  </script>
+</body>
+</html>

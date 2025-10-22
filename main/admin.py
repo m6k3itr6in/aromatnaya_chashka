@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import CoffeeShop, Worker
+from .models import CoffeeShop, Worker, Shift
 
 # Register your models here.
 @admin.register(CoffeeShop)
@@ -9,3 +9,7 @@ class CoffeeShopAdmin(admin.ModelAdmin):
 @admin.register(Worker)
 class WorkerAdmin(admin.ModelAdmin):
     list_display = ('name', 'phone_number', 'experience_years', 'start_date_experience_years', 'hourly_rate', 'coffee_shop',)
+
+@admin.register(Shift)
+class ShiftAdmin(admin.ModelAdmin):
+    list_display = ('worker', 'coffee_shop', 'date', 'start_time',)
