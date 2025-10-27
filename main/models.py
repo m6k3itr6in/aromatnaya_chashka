@@ -32,6 +32,7 @@ class Shift(models.Model):
     date = models.DateField()
     start_time = models.CharField(max_length=5, choices=SHIFT_TIMES, blank=True, null=True)
     other_coffee_shop = models.ForeignKey(CoffeeShop, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    display_value = models.CharField(max_length=10, blank=True, null=True)
 
     class Meta:
         unique_together = ('worker', 'date')

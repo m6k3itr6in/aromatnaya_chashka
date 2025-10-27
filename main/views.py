@@ -9,6 +9,11 @@ import json
 from django.db import models
 
 from .models import CoffeeShop, Shift, Worker, SwapCounter
+from django.shortcuts import render
+
+def index(request):
+    cafes = CoffeeShop.objects.all()
+    return render(request, 'main/index.html', {'cafes':cafes})
 
 def get_schedule_data(request, cafe_id):
     try:
@@ -17,11 +22,10 @@ def get_schedule_data(request, cafe_id):
         year = today.year
         month = today.month
 
-        # Количество дней в месяце
         days_in_month = calendar.monthrange(year, month)[1]
-        first_weekday = calendar.monthrange(year, month)[0]  # 0 = понедельник
+        first_weekday = calendar.monthrange(year, month)[0]
 
-        # Заголовок: дни месяца + день недели
+
         weekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
         header = []
         for day in range(1, days_in_month + 1):
@@ -34,31 +38,20 @@ def get_schedule_data(request, cafe_id):
 
         workers = Worker.objects.filter(coffee_shop=cafe)
 
-        # === ШАГ 1: Собираем все смены за месяц ===
         shifts_in_month = Shift.objects.filter(
             worker__in=workers,
             date__year=year,
             date__month=month
         )
 
-        # === ШАГ 2: Считаем количество работающих на каждый день ===
         worker_count_per_day = {}
         for day in range(1, days_in_month + 1):
             d = date(year, month, day)
-            # Считаем смены, где человек действительно работает:
-            # - либо есть start_time (своя смена)
-            # - либо есть other_coffee_shop (подработка)
-            count = shifts_in_month.filter(
-                date=d
-            ).filter(
-                models.Q(start_time__isnull=False) | models.Q(other_coffee_shop__isnull=False)
-            ).count()
+            count = shifts_in_month.filter(date=d).filter(models.Q(start_time__isnull=False) | models.Q(other_coffee_shop__isnull=False)).count()
             worker_count_per_day[d] = count
 
-        # === ШАГ 3: Формируем строки таблицы ===
         rows = []
         for worker in workers:
-            # Счётчик обменов
             counter, _ = SwapCounter.objects.get_or_create(
                 worker=worker,
                 month=date(year, month, 1),
@@ -70,8 +63,10 @@ def get_schedule_data(request, cafe_id):
                 d = date.fromisoformat(day_info['date'])
                 try:
                     shift = Shift.objects.get(worker=worker, date=d)
-                    if shift.other_coffee_shop:
-                        cell_value = f"{shift.other_coffee_shop.short_code}+"
+                    if shift.display_value:
+                        cell_value = shift.display_value
+                    elif shift.other_coffee_shop:
+                        cell_value = f"+ {shift.other_coffee_shop.short_code}"
                     elif shift.start_time:
                         cell_value = shift.start_time
                     else:
@@ -87,11 +82,9 @@ def get_schedule_data(request, cafe_id):
                 'swaps': counter.swaps_this_month
             })
 
-        # === ШАГ 4: Определяем "красные" дни (недобор) ===
         red_days = [
             day_info['day'] for day_info in header
-            if worker_count_per_day.get(date.fromisoformat(day_info['date']), 0) < cafe.minimum_workers
-        ]
+            if worker_count_per_day.get(date.fromisoformat(day_info['date']), 0) < cafe.minimum_workers]
 
         return JsonResponse({
             'cafe_name': cafe.name,
@@ -117,13 +110,13 @@ def update_shift(request):
         data = json.loads(request.body)
         worker_id = data['worker_id']
         date_str = data['date']
-        start_time = data.get('start_time')  # может быть null
-        other_cafe_id = data.get('other_cafe_id')  # может быть null
+        start_time = data.get('start_time')
+        other_cafe_id = data.get('other_cafe_id')
+        display_value = data.get('display_value')
 
         worker = Worker.objects.get(id=worker_id)
         d = date.fromisoformat(date_str)
 
-        # Определяем other_coffee_shop
         other_cafe = None
         if other_cafe_id:
             other_cafe = CoffeeShop.objects.get(id=other_cafe_id)
@@ -134,7 +127,8 @@ def update_shift(request):
             defaults={
                 'coffee_shop': worker.coffee_shop,
                 'start_time': start_time,
-                'other_coffee_shop': other_cafe
+                'other_coffee_shop': other_cafe,
+                'display_value': display_value
             }
         )
 
@@ -148,7 +142,7 @@ def check_and_notify_understaffed(cafe, d):
     actual = Shift.objects.filter(coffee_shop=cafe, date=d, start_time__isnull=False).count()
 
     if actual < cafe.minimum_workers:
-        print(f"⚠️ Недобор в {cafe.name} на {d}: {actual} < {cafe.minimum_workers}")
+        print(f"Недобор в {cafe.name} на {d}: {actual} < {cafe.minimum_workers}")
         # здесь можно отправить push-уведомление через Web Push или FCM
         # пока просто логируем — позже добавим реальные пушки
     else:
@@ -184,7 +178,5 @@ def get_coffee_shops(request):
     data = [{'id': s.id, 'short_code': s.short_code} for s in shops]
     return JsonResponse(data, safe=False)
 
-from django.shortcuts import render
-
-def schedule_view(request):
-    return render(request, 'main/schedule.html')
+def schedule_view(request, cafe_id):
+    return render(request, 'main/cafe/schedule.html', {'cafe_id': cafe_id})

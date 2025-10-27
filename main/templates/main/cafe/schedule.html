@@ -30,14 +30,14 @@
       border-collapse: collapse;
       background: white;
       box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-      min-width: 800px; /* Гарантирует ширину */
+      min-width: 800px;
     }
     th, td {
       border: 1px solid #e0e0e0;
       padding: 8px;
       text-align: center;
       font-size: 14px;
-      white-space: nowrap; /* 🔑 Запрещает перенос текста */
+      white-space: nowrap;
     }
     th {
       background: #f1f3f5;
@@ -53,7 +53,6 @@
     .cell {
       cursor: pointer;
       min-height: 36px;
-      /* УБРАНО display: flex — оно ломает таблицу */
       padding: 6px !important;
     }
     .cell:hover {
@@ -63,7 +62,7 @@
       background-color: #ffebee !important;
       color: #c62828;
     }
-    /* Модальное окно */
+    
     #modal {
       display: none;
       position: fixed;
@@ -118,7 +117,6 @@
 <body>
   <h2 id="cafe-name">Загрузка графика...</h2>
   
-  <!-- Контейнер с прокруткой -->
   <div class="table-container">
     <table id="schedule-table">
       <thead id="table-header"></thead>
@@ -126,13 +124,13 @@
     </table>
   </div>
 
-  <!-- Модальное окно -->
   <div id="modal">
     <div id="modal-content">
       <h3>Выберите смену</h3>
       <button onclick="setOwnShift('07:30')">07:30 (своя точка)</button>
       <button onclick="setOwnShift('08:00')">08:00 (своя точка)</button>
       <button onclick="setOwnShift('10:00')">10:00 (своя точка)</button>
+      <button onclick="setPlus()">+</button>
       <button onclick="openOtherShopSelector()">Подработка на другой точке</button>
       <button onclick="setOff()">Выходной</button>
       <button style="background:#f5f5f5;" onclick="closeModal()">Отмена</button>
@@ -141,16 +139,13 @@
   </div>
 
   <script>
-    // === КОНФИГУРАЦИЯ ===
-    const CAFFE_ID = 2;
+    const CAFFE_ID = {{ cafe_id }};
 
-    // === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
     let currentCell = null;
     let currentWorkerId = null;
     let currentDate = null;
     let coffeeShopsCache = null;
 
-    // === ЗАГРУЗКА ГРАФИКА ===
     async function loadSchedule() {
       try {
         const res = await fetch(`/api/schedule/${CAFFE_ID}/`);
@@ -159,7 +154,6 @@
 
         document.getElementById('cafe-name').textContent = data.cafe_name;
 
-        // Заголовок
         let headerHTML = '<tr><th>Работник</th>';
         data.header.forEach(day => {
           const isRed = data.red_days.includes(day.day);
@@ -171,7 +165,6 @@
         headerHTML += '</tr>';
         document.getElementById('table-header').innerHTML = headerHTML;
 
-        // Тело
         let bodyHTML = '';
         data.rows.forEach(row => {
           const swapText = row.swaps !== undefined ? ` (${row.swaps}/4)` : '';
@@ -179,7 +172,6 @@
             <button class="swap-btn" onclick="incrementSwap(${row.id})">+1</button>
           </td>`;
           
-          // 🔑 Гарантированно создаём ячейку для КАЖДОГО дня
           for (let i = 0; i < data.header.length; i++) {
             const cellValue = row.data[i] || '';
             const day = data.header[i];
@@ -200,7 +192,6 @@
       }
     }
 
-    // === РЕДАКТИРОВАНИЕ ЯЧЕЙКИ ===
     function editShift(cell, workerId, date) {
       currentCell = cell;
       currentWorkerId = workerId;
@@ -214,11 +205,15 @@
     }
 
     async function setOwnShift(time) {
-      await saveShift(time, null);
+      await saveShift(time, null, null);
     }
 
     function setOff() {
-      saveShift(null, null);
+      saveShift(null, null, null);
+    }
+
+    function setPlus() {
+      saveShift(null, null, '+');
     }
 
     async function openOtherShopSelector() {
@@ -226,23 +221,24 @@
         const res = await fetch('/api/coffee-shops/');
         coffeeShopsCache = await res.json();
       }
-      let html = '<h4>Выберите точку:</h4>';
+      let html = '<h4>Выберите точку для подработки:</h4>';
       coffeeShopsCache.forEach(shop => {
-        html += `<button onclick="setOtherShop(${shop.id})">${shop.short_code}+</button>`;
+        html += `<button onclick="setOtherShop(${shop.id}, '${shop.short_code}')">${shop.short_code}</button>`;
       });
       document.getElementById('other-shops').innerHTML = html;
       document.getElementById('other-shops').style.display = 'block';
     }
 
-    function setOtherShop(cafeId) {
-      saveShift(null, cafeId);
+    function setOtherShop(cafeId, shortCode) {
+      saveShift(null, cafeId, shortCode);
     }
 
-    async function saveShift(start_time, other_cafe_id) {
+    async function saveShift(start_time, other_cafe_id, displayValue) {
       try {
         const payload = { worker_id: currentWorkerId, date: currentDate };
         if (start_time !== null) payload.start_time = start_time;
         if (other_cafe_id !== null) payload.other_cafe_id = other_cafe_id;
+        if (displayValue !== null) payload.display_value = displayValue;
 
         const res = await fetch('/api/shift/update/', {
           method: 'POST',
@@ -251,14 +247,6 @@
         });
 
         if (res.ok) {
-          if (other_cafe_id !== null) {
-            const shop = coffeeShopsCache.find(s => s.id == other_cafe_id);
-            currentCell.textContent = shop ? shop.short_code + '+' : '???+';
-          } else if (start_time !== null) {
-            currentCell.textContent = start_time;
-          } else {
-            currentCell.textContent = '';
-          }
           loadSchedule();
         } else {
           alert('Ошибка сохранения');
@@ -269,7 +257,6 @@
       closeModal();
     }
 
-    // === СЧЁТЧИК ОБМЕНОВ ===
     async function incrementSwap(workerId) {
       if (!confirm('Увеличить счётчик обменов на 1?')) return;
       try {
@@ -288,7 +275,6 @@
       }
     }
 
-    // === ИНИЦИАЛИЗАЦИЯ ===
     window.addEventListener('load', loadSchedule);
   </script>
 </body>
